@@ -3,9 +3,11 @@ package zipmt
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"io"
 	"log"
+	"time"
 
 	"github.com/emirpasic/gods/sets/treeset"
 )
@@ -27,12 +29,20 @@ type GZipper struct{}
 
 // Implements compressing the part using GZIP
 func (p *GZipper) Shrink(part *ZipPart) (*ZipPart, error) {
-	out_buf := make([]byte, part.in_sz*2)
-	zw := gzip.NewWriter(bufio.NewWriter(bytes.NewBuffer(out_buf)))
+	out_bufz := part.in_sz + int(float64(part.in_sz)*0.50) // make it a little bigger in case shrink needs extra room
+	out_buf := make([]byte, out_bufz)
+	zw, err := gzip.NewWriterLevel(bufio.NewWriter(bytes.NewBuffer(out_buf)), flate.BestCompression)
+	if err != nil {
+		log.Fatal("GZIP Error with new writer: " + err.Error())
+	}
 	bytes_written, err := zw.Write(part.inbuf)
 	zw.Close()
+	log.Printf("Compression complete. %d bytes written. err: %s", bytes_written, err)
 	if err != nil {
 		log.Fatal("GZIP Error: " + err.Error())
+	}
+	if bytes_written > out_bufz {
+		log.Fatalf("Buffer overflow: bytes_written:%d, outbufz:%d", bytes_written, out_bufz)
 	}
 	compressed_part := ZipPart{
 		outbuf: out_buf,
@@ -118,21 +128,26 @@ func compareParts(p1, p2 interface{}) int {
 // parts come out of order since the compression time varies so make sure we're
 func getNextPart(part_num int, results chan *ZipPart, pending_parts *treeset.Set) *ZipPart {
 	for {
+		// first check to see if we have the expedt part already
+		if pending_parts.Size() > 0 {
+			itr := pending_parts.Iterator()
+			itr.First()
+			next_part := itr.Value().(*ZipPart)
+			log.Printf("Lowest Part number is %d", next_part.num)
+			if next_part.num == part_num {
+				log.Printf("Retrieved next part %d from pending", next_part.num)
+				pending_parts.Remove(next_part)
+				return next_part
+			}
+		}
+		// otherwise wait for new result to arrive and either return it or add it to pending
 		part := <-results
 		log.Printf("GetNext part got result for part num: %d expecting %d", part.num, part_num)
-		if part.num == part_num || part.isEOF {
+		if part.num == part_num {
 			return part
 		}
 		log.Printf("Out of order part %d. adding to pending_parts (%d)", part.num, pending_parts.Size())
 		pending_parts.Add(part)
-		itr := pending_parts.Iterator()
-		itr.First()
-		next_part := itr.Value().(*ZipPart)
-		log.Printf("Lowest Part number is %d", next_part.num)
-		if next_part.num == part_num {
-			pending_parts.Remove(next_part)
-			return next_part
-		}
 	}
 }
 
@@ -164,7 +179,9 @@ func WriteWorker(output *bufio.Writer, results chan *ZipPart) {
 // Does the zip thing using multiple workers to compress the data in chunks
 func ZipMt(input *bufio.Reader, output *bufio.Writer) {
 	pool_size := 16
-	chunk_size := 1024 * 1024
+	chunk_size := 1024 * 1024 * 4 //4mb chunks
+	started := time.Now()
+	log.Printf("Running ZipMt with pool_size:%d and chunk_size:%d", pool_size, chunk_size)
 	//initialize the worker pool
 	jobs := make(chan *ZipPart, pool_size)
 	results := make(chan *ZipPart, pool_size)
@@ -180,4 +197,6 @@ func ZipMt(input *bufio.Reader, output *bufio.Writer) {
 	}
 	// write the results out until done
 	WriteWorker(output, results)
+	ended := time.Now()
+	log.Printf("ZipMt Complete. Elapsed: %s", ended.Sub(started))
 }

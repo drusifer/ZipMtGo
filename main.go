@@ -8,6 +8,8 @@ import (
 	"github.com/druisfer/zipmt-go/zipmt"
 )
 
+// Elapsed: 1m23.2902475s
+
 func main() {
 	in_f, err := os.Open("C:\\Users\\drusi\\Downloads\\android-studio-2022.1.1.20-windows.exe")
 	if err != nil {
