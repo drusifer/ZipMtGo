@@ -18,7 +18,7 @@ func main() {
 	}
 	reader := bufio.NewReader(in_f)
 
-	out_f, err := os.Create("C:\\Users\\drusi\\Downloads\\android-studio-2022.1.1.20-windows.exe.gz")
+	out_f, err := os.Create("C:\\Users\\drusi\\Downloads\\android-studio-2022.1.1.20-windows.exe.xz")
 	if err != nil {
 		log.Fatal("Err opening output file: " + err.Error())
 	}
