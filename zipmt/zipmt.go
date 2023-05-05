@@ -161,7 +161,7 @@ func ZipMt(input *bufio.Reader, output *bufio.Writer) {
 	i := 0
 	for i < pool_size {
 
-		go CompressionWorker(&BZ2Zipper{}, jobs, results)
+		go CompressionWorker(&XZZipper{}, jobs, results)
 		i++
 	}
 	// write the results out until done
