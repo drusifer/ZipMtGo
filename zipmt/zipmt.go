@@ -2,24 +2,47 @@ package zipmt
 
 import (
 	"bufio"
+	"bytes"
+	"fmt"
 	"io"
 	"log"
+	"reflect"
+	"runtime"
 	"time"
 
 	"github.com/emirpasic/gods/sets/treeset"
 )
 
 type compressor interface {
-	Shrink(part *ZipPart) (*ZipPart, error)
+	// blocking call to compress the data. It should handle the full lifecycle of the
+	// underlying implementation: Create a writer that writes to output_writer,
+	// 							  Call Write() and Close() to ensure all data is writen out.
+	Shrink(input_buf *[]byte, output_writer io.Writer) error
+
+	Verify(reader io.Reader) error
 }
 
 type ZipPart struct {
-	inbuf  []byte
-	in_sz  int
-	outbuf []byte
-	out_sz int
-	num    int
-	isEOF  bool
+	Inbuf  []byte
+	In_sz  int
+	Outbuf []byte
+	Out_sz int
+	Num    int
+	IsEOF  bool
+}
+
+type CountedWriter struct {
+	bufio.Writer
+	Count int
+}
+
+// function that keeps track of how many bytes are passed down.
+// I use this because the io.Write() implemention returns the number of bytes passed in
+// not the number of bytes written out (post compression)
+func (w *CountedWriter) Write(p []byte) (n int, err error) {
+	n, err = w.Writer.Write(p)
+	w.Count += n
+	return n, err
 }
 
 func ReadChunk(input *bufio.Reader, part_num int, chunk_size int) (*ZipPart, error) {
@@ -28,10 +51,10 @@ func ReadChunk(input *bufio.Reader, part_num int, chunk_size int) (*ZipPart, err
 	bytes_read, err := input.Read(inbuf)
 
 	part := ZipPart{
-		inbuf: inbuf,
-		in_sz: bytes_read,
-		num:   part_num,
-		isEOF: (err == io.EOF),
+		Inbuf: inbuf,
+		In_sz: bytes_read,
+		Num:   part_num,
+		IsEOF: (err == io.EOF),
 	}
 
 	return &part, err
@@ -44,7 +67,7 @@ func ReadWorker(input *bufio.Reader, jobs chan *ZipPart, pool_size int, chunk_si
 	for {
 		// chop off chunks of input into numbered parts
 		part, err := ReadChunk(input, part_num, chunk_size)
-		log.Printf("read %d from input at part %d\n", part.in_sz, part.num)
+		log.Printf("read %d from input at part %d\n", part.In_sz, part.Num)
 		// send each part into a workerpool of compression workers
 		jobs <- part
 		part_num++
@@ -58,32 +81,71 @@ func ReadWorker(input *bufio.Reader, jobs chan *ZipPart, pool_size int, chunk_si
 		i := 0
 		for i < pool_size-1 {
 			i++
-			jobs <- &ZipPart{num: part_num + i, isEOF: true} // make sure all the workers get the EOF message
+			jobs <- &ZipPart{Num: part_num + i, IsEOF: true} // make sure all the workers get the EOF message
 		}
 	} else {
 		log.Fatal("Read Worker IO Error: " + err.Error())
 	}
 }
 
-func CompressionWorker(comp compressor, jobs chan *ZipPart, results chan *ZipPart) {
+func NewCompressorForAlgoName(algo_name string) compressor {
+	var comp compressor
+	switch algo_name {
+	case "xz":
+		comp = &XZZipper{}
+	case "bz2":
+		comp = &BZ2Zipper{}
+	case "gz":
+		comp = &GZipper{}
+	default:
+		log.Printf("defaulting algo_name to xz: %s", algo_name)
+		comp = &XZZipper{}
+
+	}
+	return comp
+}
+func TestFile(algo_name string, reader io.Reader) error {
+	comp := NewCompressorForAlgoName(algo_name)
+	return comp.Verify(reader)
+}
+
+func CompressPart(comp compressor, part *ZipPart) error {
+
+	// make the new buffer to write compressed output to
+	var err error
+	out_buf := bytes.NewBuffer(make([]byte, 0, part.In_sz*2)) // make it bigger in case the data inflates
+	writer := CountedWriter{
+		Writer: *bufio.NewWriter(out_buf),
+	}
+	if part.In_sz > 0 {
+		err = comp.Shrink(&part.Inbuf, &writer)
+		writer.Writer.Flush()
+		log.Printf("CompressionWorker shrunk part %d from %d to %d bytes",
+			part.Num, part.In_sz, writer.Count)
+
+		part.Outbuf = out_buf.Bytes()
+		part.Out_sz = writer.Count
+	}
+	return err
+
+}
+
+func CompressionWorker(algo_name string, jobs chan *ZipPart, results chan *ZipPart) {
 	// construct the compressor
+	comp := NewCompressorForAlgoName(algo_name)
 	for {
 		part := <-jobs
-		log.Printf("CompressionWorker got part %d", part.num)
-		if part.in_sz > 0 {
-			shrunk_part, err := comp.Shrink(part)
-			if err != nil {
-				log.Fatal("Compress Worker Error: " + err.Error())
-			}
-			log.Printf("CompressionWorker shrunk part %d from %d to %d bytes",
-				part.num, part.in_sz, shrunk_part.out_sz)
-			results <- shrunk_part
-		} else if part.isEOF {
-			results <- part // 0 size EOF
+		log.Printf("CompressionWorker got part %d, iseof:%t", part.Num, part.IsEOF)
+		err := CompressPart(comp, part)
+		if err != nil {
+			log.Fatalf("Error from compressor Shrink %s: %s",
+				reflect.TypeOf(comp), err)
 		}
-		if part.isEOF {
-			log.Printf("CompressionWorker got EOF in %d", part.num)
-			break
+		results <- part
+
+		if part.IsEOF {
+			log.Printf("CompressionWorker got EOF in %d", part.Num)
+			break // terminats CompressionWorker
 		}
 	}
 }
@@ -91,7 +153,7 @@ func CompressionWorker(comp compressor, jobs chan *ZipPart, results chan *ZipPar
 func compareParts(p1, p2 interface{}) int {
 	zp1 := p1.(*ZipPart)
 	zp2 := p2.(*ZipPart)
-	return zp1.num - zp2.num
+	return zp1.Num - zp2.Num
 }
 
 // parts come out of order since the compression time varies so make sure we're
@@ -102,22 +164,35 @@ func getNextPart(part_num int, results chan *ZipPart, pending_parts *treeset.Set
 			itr := pending_parts.Iterator()
 			itr.First()
 			next_part := itr.Value().(*ZipPart)
-			log.Printf("Lowest Part number is %d", next_part.num)
-			if next_part.num == part_num {
-				log.Printf("Retrieved next part %d from pending", next_part.num)
+			log.Printf("Lowest Part number is %d", next_part.Num)
+			if next_part.Num == part_num {
+				log.Printf("Retrieved next part %d from pending", next_part.Num)
 				pending_parts.Remove(next_part)
 				return next_part
 			}
 		}
 		// otherwise wait for new result to arrive and either return it or add it to pending
 		part := <-results
-		log.Printf("GetNext part got result for part num: %d expecting %d", part.num, part_num)
-		if part.num == part_num {
+		log.Printf("GetNext part got result for part num: %d expecting %d", part.Num, part_num)
+		if part.Num == part_num {
 			return part
 		}
-		log.Printf("Out of order part %d. adding to pending_parts (%d)", part.num, pending_parts.Size())
+		log.Printf("Out of order part %d. adding to pending_parts (%d)", part.Num, pending_parts.Size())
 		pending_parts.Add(part)
 	}
+}
+
+func WriteChunk(output *bufio.Writer, part *ZipPart) error {
+	var err error
+	var n int
+	if part.Out_sz > 0 {
+		n, err = output.Write(part.Outbuf[:part.Out_sz])
+		output.Flush()
+		if n != part.Out_sz {
+			err = fmt.Errorf("tried to write %d but only wrote %d bytes", part.Out_sz, n)
+		}
+	}
+	return err
 }
 
 // Worker for reading results off the results channel and outputting the compressed data into
@@ -129,25 +204,20 @@ func WriteWorker(output *bufio.Writer, results chan *ZipPart) {
 		// get the next part from the queue
 		part := getNextPart(next_part, results, pending_parts)
 		next_part++
-		log.Printf("Write Worker got part %d with %d bytes. isEOF? %t", part.num, part.out_sz, part.isEOF)
-		if part.out_sz > 0 {
-			n, err := output.Write(part.outbuf[:part.out_sz])
-			if n != part.out_sz {
-				log.Fatalf("Tried to write %d but only wrote %d bytes", part.out_sz, n)
-			}
-			if err != nil {
-				log.Fatal("Write IO Error: " + err.Error())
-			}
+		log.Printf("Write Worker got part %d with %d bytes. isEOF? %t", part.Num, part.Out_sz, part.IsEOF)
+		err := WriteChunk(output, part)
+		if err != nil {
+			log.Fatal("Write IO Error: " + err.Error())
 		}
-		if part.isEOF {
+		if part.IsEOF {
 			break
 		}
 	}
 }
 
 // Does the zip thing using multiple workers to compress the data in chunks
-func ZipMt(input *bufio.Reader, output *bufio.Writer) {
-	pool_size := 16
+func ZipMt(input *bufio.Reader, output *bufio.Writer, algo_name string) {
+	pool_size := runtime.NumCPU()
 	chunk_size := 1024 * 1024 * 4 //4mb chunks
 	started := time.Now()
 	log.Printf("Running ZipMt with pool_size:%d and chunk_size:%d", pool_size, chunk_size)
@@ -161,7 +231,7 @@ func ZipMt(input *bufio.Reader, output *bufio.Writer) {
 	i := 0
 	for i < pool_size {
 
-		go CompressionWorker(&XZZipper{}, jobs, results)
+		go CompressionWorker(algo_name, jobs, results)
 		i++
 	}
 	// write the results out until done

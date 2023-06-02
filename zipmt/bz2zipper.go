@@ -1,37 +1,38 @@
 package zipmt
 
 import (
-	"bufio"
-	"bytes"
-	"log"
+	bz2 "compress/bzip2"
+	"io"
 
 	"github.com/larzconwell/bzip2"
 )
 
 type BZ2Zipper struct{}
 
-// Implements compressing the part using GZIP
-func (p *BZ2Zipper) Shrink(part *ZipPart) (*ZipPart, error) {
-	out_bufz := part.in_sz + int(float64(part.in_sz)*0.50) // make it a little bigger in case shrink needs extra room
-	out_buf := make([]byte, out_bufz)
-	zw, err := bzip2.NewWriterLevel(bufio.NewWriter(bytes.NewBuffer(out_buf)), bzip2.BestCompression)
+func (p *BZ2Zipper) Shrink(input_bytes *[]byte, out_writer io.Writer) error {
+	zw, err := bzip2.NewWriterLevel(out_writer, bzip2.BestCompression)
 	if err != nil {
-		log.Fatal("BZ2ZIP Error with new writer: " + err.Error())
+		return err
 	}
-	bytes_written, err := zw.Write(part.inbuf)
-	zw.Close()
-	log.Printf("Compression complete. %d bytes written. err: %s", bytes_written, err)
+	_, err = zw.Write(*input_bytes)
 	if err != nil {
-		log.Fatal("BZ2ZIP Error: " + err.Error())
+		return err
 	}
-	if bytes_written > out_bufz {
-		log.Fatalf("Buffer overflow: bytes_written:%d, outbufz:%d", bytes_written, out_bufz)
+	err = zw.Close()
+	return err
+}
+
+func (p *BZ2Zipper) Verify(input io.Reader) error {
+	br := bz2.NewReader(input)
+	var err error
+	for {
+		buf := make([]byte, 4096*10)
+		_, err = br.Read(buf)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
 	}
-	compressed_part := ZipPart{
-		outbuf: out_buf,
-		out_sz: bytes_written,
-		num:    part.num,
-		isEOF:  part.isEOF,
-	}
-	return &compressed_part, err
 }

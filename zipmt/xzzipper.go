@@ -1,37 +1,31 @@
 package zipmt
 
 import (
-	"bufio"
-	"bytes"
-	"log"
+	"io"
 
 	"github.com/ulikunitz/xz"
 )
 
 type XZZipper struct{}
 
-// Implements compressing the part using GZIP
-func (p *XZZipper) Shrink(part *ZipPart) (*ZipPart, error) {
-	out_bufz := part.in_sz + int(float64(part.in_sz)*0.50) // make it a little bigger in case shrink needs extra room
-	out_buf := make([]byte, out_bufz)
-	zw, err := xz.NewWriter(bufio.NewWriter(bytes.NewBuffer(out_buf)))
+// Implements compressing the part using XZ
+func (p XZZipper) Shrink(input_bytes *[]byte, out_writer io.Writer) error {
+	zw, err := xz.NewWriter(out_writer)
 	if err != nil {
-		log.Fatal("XZ Error with new writer: " + err.Error())
+		return err
 	}
-	bytes_written, err := zw.Write(part.inbuf)
-	zw.Close()
-	log.Printf("Compression complete. %d bytes written. err: %s", bytes_written, err)
+	_, err = zw.Write(*input_bytes)
 	if err != nil {
-		log.Fatal("XZ Error: " + err.Error())
+		return err
 	}
-	if bytes_written > out_bufz {
-		log.Fatalf("Buffer overflow: bytes_written:%d, outbufz:%d", bytes_written, out_bufz)
+	err = zw.Close()
+	return err
+}
+
+func (p XZZipper) Verify(input io.Reader) error {
+	reader, err := xz.NewReader(input)
+	if err != nil {
+		err = reader.Verify()
 	}
-	compressed_part := ZipPart{
-		outbuf: out_buf,
-		out_sz: bytes_written,
-		num:    part.num,
-		isEOF:  part.isEOF,
-	}
-	return &compressed_part, err
+	return err
 }
