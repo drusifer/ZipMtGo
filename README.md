@@ -1,5 +1,5 @@
 # ZipMtGo
-a tool that accellerates the compression of files using asych pool workers
+a tool that accelerates the compression of files using asych pool workers
 
 # Usage
 <pre>Usage of ZipMtGo.exe:
