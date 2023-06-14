@@ -14,7 +14,13 @@
             "type": "go",
             "request": "launch",
             "program":"${workspaceFolder}",
-            "args": ["-input", "C:\\Users\\drusi\\Downloads\\linux-6.3.tar", "-algo", "xz"]
+            "args": ["-input", "C:\\Users\\drusi\\Downloads\\linux-6.3.tar", "-algo", "bz2"]
+        },
+        {   "name": "RunHelp",
+            "type": "go",
+            "request": "launch",
+            "program":"${workspaceFolder}",
+            "args": ["--help"]
         }
     ]
 }

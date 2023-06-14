@@ -3,6 +3,7 @@ package zipmt_test
 import (
 	"bufio"
 	"bytes"
+	"compress/bzip2"
 	"testing"
 
 	"github.com/druisfer/zipmt-go/zipmt"
@@ -32,6 +33,69 @@ func TestCompress(t *testing.T) {
 	err = comp.Verify(reader)
 	if err != nil {
 		t.Fatalf("CompressPart verificaiton failed error: %v", err)
+	}
+
+}
+
+func TestCompressGz(t *testing.T) {
+	expected := "Data that was written!!"
+	part := zipmt.ZipPart{
+		Inbuf: []byte(expected),
+		In_sz: len(expected),
+	}
+	comp := &zipmt.GZipper{}
+	CompressorTest(t, &part, comp)
+}
+func TestCompressXz(t *testing.T) {
+	expected := "Data that was written!!"
+	part := zipmt.ZipPart{
+		Inbuf: []byte(expected),
+		In_sz: len(expected),
+	}
+	comp := &zipmt.XZZipper{}
+	CompressorTest(t, &part, comp)
+}
+
+func TestCompressBZ2(t *testing.T) {
+	expected := "Data that was written!!"
+	part := zipmt.ZipPart{
+		Inbuf: []byte(expected),
+		In_sz: len(expected),
+	}
+	comp := &zipmt.BZ2Zipper{}
+	CompressorTest(t, &part, comp)
+
+	reader := bzip2.NewReader(bytes.NewReader(part.Outbuf))
+	data := make([]byte, len(expected)*2)
+	n, err := reader.Read(data)
+
+	if err != nil {
+		t.Fatalf("Got Error when reading compressed data: %v", err)
+	}
+
+	if n != len(expected) {
+		t.Fatalf("incorrect number of bytes decompressed: expect:%d got:%d", len(expected), n)
+	}
+
+	if string(data) != expected {
+		t.Fatalf("Expected: `%s` got `%s`", expected, string(data))
+	}
+}
+
+func CompressorTest(t *testing.T, part *zipmt.ZipPart, comp zipmt.Compressor) {
+	out := bytes.NewBuffer([]byte{})
+	err := comp.Shrink(part.Inbuf, out)
+	if err != nil {
+		t.Fatalf("Got error from Shrink: %v", err)
+	}
+
+	part.Outbuf = out.Bytes()
+	part.Out_sz = out.Len()
+
+	r := bufio.NewReader(out)
+	verr := comp.Verify(r)
+	if verr != nil {
+		t.Fatalf("Got Verify Error:%v", err)
 	}
 }
 

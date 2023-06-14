@@ -9,12 +9,12 @@ import (
 type GZipper struct{}
 
 // Implements compressing the part using GZIP
-func (p *GZipper) Shrink(input_bytes *[]byte, out_writer io.Writer) error {
+func (p *GZipper) Shrink(input_bytes []byte, out_writer io.Writer) error {
 	zw, err := gzip.NewWriterLevel(out_writer, flate.BestCompression)
 	if err != nil {
 		return err
 	}
-	_, err = zw.Write(*input_bytes)
+	_, err = zw.Write(input_bytes)
 	if err != nil {
 		return err
 	}

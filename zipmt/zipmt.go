@@ -13,11 +13,11 @@ import (
 	"github.com/emirpasic/gods/sets/treeset"
 )
 
-type compressor interface {
+type Compressor interface {
 	// blocking call to compress the data. It should handle the full lifecycle of the
 	// underlying implementation: Create a writer that writes to output_writer,
 	// 							  Call Write() and Close() to ensure all data is writen out.
-	Shrink(input_buf *[]byte, output_writer io.Writer) error
+	Shrink(input_buf []byte, output_writer io.Writer) error
 
 	Verify(reader io.Reader) error
 }
@@ -88,8 +88,8 @@ func ReadWorker(input *bufio.Reader, jobs chan *ZipPart, pool_size int, chunk_si
 	}
 }
 
-func NewCompressorForAlgoName(algo_name string) compressor {
-	var comp compressor
+func NewCompressorForAlgoName(algo_name string) Compressor {
+	var comp Compressor
 	switch algo_name {
 	case "xz":
 		comp = &XZZipper{}
@@ -109,21 +109,21 @@ func TestFile(algo_name string, reader io.Reader) error {
 	return comp.Verify(reader)
 }
 
-func CompressPart(comp compressor, part *ZipPart) error {
+func CompressPart(comp Compressor, part *ZipPart) error {
 
 	// make the new buffer to write compressed output to
 	var err error
-	out_buf := bytes.NewBuffer(make([]byte, 0, part.In_sz*2)) // make it bigger in case the data inflates
-	writer := CountedWriter{
-		Writer: *bufio.NewWriter(out_buf),
-	}
 	if part.In_sz > 0 {
-		err = comp.Shrink(&part.Inbuf, &writer)
+		out_buf := bytes.NewBuffer(make([]byte, 0, part.In_sz*2)) // make it bigger in case the data inflates
+		writer := CountedWriter{
+			Writer: *bufio.NewWriter(out_buf),
+		}
+		err = comp.Shrink(part.Inbuf[:part.In_sz], &writer)
 		writer.Writer.Flush()
 		log.Printf("CompressionWorker shrunk part %d from %d to %d bytes",
 			part.Num, part.In_sz, writer.Count)
 
-		part.Outbuf = out_buf.Bytes()
+		part.Outbuf = out_buf.Bytes()[:writer.Count]
 		part.Out_sz = writer.Count
 	}
 	return err
@@ -131,7 +131,7 @@ func CompressPart(comp compressor, part *ZipPart) error {
 }
 
 func CompressionWorker(algo_name string, jobs chan *ZipPart, results chan *ZipPart) {
-	// construct the compressor
+	// construct the Compressor
 	comp := NewCompressorForAlgoName(algo_name)
 	for {
 		part := <-jobs
