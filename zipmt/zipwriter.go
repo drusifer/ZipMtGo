@@ -23,9 +23,9 @@ type ZipWriter struct {
 
 func (w *ZipWriter) Write(data []byte) (n int, err error) {
 	// make sure the writer is still healthy
-	async_error := w.err.Load().(error)
-	if async_error != nil {
-		return 0, async_error
+	async_error := w.err.Load().(*error)
+	if *async_error != nil {
+		return 0, *async_error
 	}
 	length := len(data)
 	chunks := (length / w.chunk_size) + 1
@@ -52,23 +52,29 @@ func (w *ZipWriter) Write(data []byte) (n int, err error) {
 
 func (w *ZipWriter) Close() (err error) {
 	// send EOF and wait for pools to empty
-	part := ZipPart{
-		IsEOF: true,
+	for i := 0; i < w.pool_size; i++ {
+		// send EOF to all compression workers so they can exit cleanly
+		part := ZipPart{
+			IsEOF: true,
+			Num:   w.part_number,
+		}
+		w.part_number++
+		w.jobs <- &part
 	}
-	w.jobs <- &part
 
 	// block for done
 	<-w.eof
 	// done reciecved
 
 	// return any error that occured.
-	return w.err.Load().(error)
+	return *w.err.Load().(*error)
 }
 
-func NewZipWriter(output io.Writer, algo AlgoName) (w ZipWriter) {
+func NewZipWriter(output io.Writer, algo AlgoName, chunk_size int) (w ZipWriter) {
 	zw := ZipWriter{
 		output_writer: output,
 		algo_name:     algo,
+		chunk_size:    chunk_size,
 	}
 	zw.start()
 	return zw
@@ -77,14 +83,15 @@ func NewZipWriter(output io.Writer, algo AlgoName) (w ZipWriter) {
 func (w *ZipWriter) start() {
 	// set up workers for reading data provided by calls to Write
 	w.pool_size = runtime.NumCPU()
-	w.chunk_size = 1024 * 1024 * 4 //4mb chunks
 	w.current_chunk = make([]byte, w.chunk_size)
 	log.Printf("Running ZipMt with pool_size:%d and chunk_size:%d", w.pool_size, w.chunk_size)
 	//initialize the worker pool
 	w.jobs = make(chan *ZipPart, w.pool_size)
 	w.results = make(chan *ZipPart, w.pool_size)
 	w.eof = make(chan bool)
-
+	w.err = atomic.Value{}
+	var err error = nil
+	w.err.Store(&err)
 	// start the compression workers
 	i := 0
 	for i < w.pool_size {

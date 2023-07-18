@@ -97,6 +97,7 @@ func CompressorTest(t *testing.T, part *ZipPart, comp Compressor) {
 	}
 }
 
+/*
 func TestReadChunk(t *testing.T) {
 	expected := "Data to read!!"
 	reader := bufio.NewReader(bytes.NewReader([]byte(expected)))
@@ -113,6 +114,7 @@ func TestReadChunk(t *testing.T) {
 		t.Fatalf("Didn't get the data expected: [%s], got: [%s]", expected, data_read)
 	}
 }
+*/
 
 func TestWriteChunk(t *testing.T) {
 	expected := "Data that was written!!"

@@ -62,4 +62,5 @@ func main() {
 	writer := bufio.NewWriter(out_f)
 	zipmt.ZipMt(reader, writer, algo)
 	writer.Flush()
+	out_f.Close()
 }

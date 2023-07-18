@@ -65,6 +65,7 @@ func writeWorker(zw *ZipWriter, output io.Writer, results chan *ZipPart, done ch
 			break
 		}
 		if part.IsEOF {
+			log.Printf("Write worker got EOF")
 			break
 		}
 	}

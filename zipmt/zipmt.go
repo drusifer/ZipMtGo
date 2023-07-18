@@ -63,7 +63,7 @@ type ZipPart struct {
 }
 
 type CountedWriter struct {
-	bufio.Writer
+	io.Writer
 	Count int
 }
 
@@ -76,40 +76,24 @@ func (w *CountedWriter) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-func ReadChunk(input *bufio.Reader, part_num int, chunk_size int) (*ZipPart, error) {
-	inbuf := make([]byte, chunk_size)
-
-	bytes_read, err := input.Read(inbuf)
-
-	part := ZipPart{
-		Inbuf: inbuf,
-		In_sz: bytes_read,
-		Num:   part_num,
-		IsEOF: (err == io.EOF),
-	}
-
-	return &part, err
-}
-
-func ReadWorker(input *bufio.Reader, zw ZipWriter) {
+func readWorker(input *bufio.Reader, zw *ZipWriter) {
 	buf := make([]byte, zw.chunk_size)
 	var err error
 	n := 0
-	for err != io.EOF {
+	for err == nil {
 		n, err = input.Read(buf)
 		log.Printf("read %d bytes from input", n)
 		_, write_err := zw.Write(buf[:n])
 		if write_err != nil {
 			log.Panicf("Got write error: %v", write_err)
 		}
+		if n == 0 || err == io.EOF {
+			break
+		}
 	}
 
 	if err == io.EOF {
 		log.Printf("Read Work got eof and is done.")
-		close_err := zw.Close()
-		if close_err != nil {
-			log.Panicf("Error closing zip worker: %v", close_err)
-		}
 	}
 }
 
@@ -123,12 +107,19 @@ func ZipMt(input *bufio.Reader, output *bufio.Writer, algo_name AlgoName) {
 	pool_size := runtime.NumCPU()
 	chunk_size := 1024 * 1024 * 4 //4mb chunks
 	started := time.Now()
+
 	log.Printf("Running ZipMt with pool_size:%d and chunk_size:%d", pool_size, chunk_size)
-	zw := NewZipWriter(output, algo_name)
+	zw := NewZipWriter(output, algo_name, chunk_size)
+	zw.start()
 
 	// read the input stream and write to the ZipWriter
 	// blocks until all input is compressed (async)
-	ReadWorker(input, zw)
+	readWorker(input, &zw)
+	output.Flush()
+	close_err := zw.Close()
+	if close_err != nil {
+		log.Panicf("Error closing zip worker: %v", close_err)
+	}
 
 	ended := time.Now()
 	log.Printf("ZipMt Complete. Elapsed: %s", ended.Sub(started))
