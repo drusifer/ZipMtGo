@@ -1,12 +1,10 @@
-package zipmt_test
+package zipmt
 
 import (
 	"bufio"
 	"bytes"
 	"compress/bzip2"
 	"testing"
-
-	"github.com/druisfer/zipmt-go/zipmt"
 )
 
 func TestZipMt(t *testing.T) {
@@ -15,13 +13,13 @@ func TestZipMt(t *testing.T) {
 
 func TestCompress(t *testing.T) {
 	expected := "Data that was written!!"
-	part := zipmt.ZipPart{
+	part := ZipPart{
 		Inbuf: []byte(expected),
 		In_sz: len(expected),
 	}
-	comp := zipmt.GZipper{}
+	comp := GZipper{}
 
-	err := zipmt.CompressPart(&comp, &part)
+	err := compressPart(&comp, &part)
 	if err != nil {
 		t.Fatalf("CompressPart got error: %v", err)
 	}
@@ -39,30 +37,30 @@ func TestCompress(t *testing.T) {
 
 func TestCompressGz(t *testing.T) {
 	expected := "Data that was written!!"
-	part := zipmt.ZipPart{
+	part := ZipPart{
 		Inbuf: []byte(expected),
 		In_sz: len(expected),
 	}
-	comp := &zipmt.GZipper{}
+	comp := &GZipper{}
 	CompressorTest(t, &part, comp)
 }
 func TestCompressXz(t *testing.T) {
 	expected := "Data that was written!!"
-	part := zipmt.ZipPart{
+	part := ZipPart{
 		Inbuf: []byte(expected),
 		In_sz: len(expected),
 	}
-	comp := &zipmt.XZZipper{}
+	comp := &XZZipper{}
 	CompressorTest(t, &part, comp)
 }
 
 func TestCompressBZ2(t *testing.T) {
 	expected := "Data that was written!!"
-	part := zipmt.ZipPart{
+	part := ZipPart{
 		Inbuf: []byte(expected),
 		In_sz: len(expected),
 	}
-	comp := &zipmt.BZ2Zipper{}
+	comp := &BZ2Zipper{}
 	CompressorTest(t, &part, comp)
 
 	reader := bzip2.NewReader(bytes.NewReader(part.Outbuf))
@@ -82,7 +80,7 @@ func TestCompressBZ2(t *testing.T) {
 	}
 }
 
-func CompressorTest(t *testing.T, part *zipmt.ZipPart, comp zipmt.Compressor) {
+func CompressorTest(t *testing.T, part *ZipPart, comp Compressor) {
 	out := bytes.NewBuffer([]byte{})
 	err := comp.Shrink(part.Inbuf, out)
 	if err != nil {
@@ -102,7 +100,7 @@ func CompressorTest(t *testing.T, part *zipmt.ZipPart, comp zipmt.Compressor) {
 func TestReadChunk(t *testing.T) {
 	expected := "Data to read!!"
 	reader := bufio.NewReader(bytes.NewReader([]byte(expected)))
-	part, err := zipmt.ReadChunk(reader, 0, 1024)
+	part, err := ReadChunk(reader, 0, 1024)
 	if err != nil {
 		t.Fatalf("ReadChunk got error: %v", err)
 	}
@@ -118,13 +116,14 @@ func TestReadChunk(t *testing.T) {
 
 func TestWriteChunk(t *testing.T) {
 	expected := "Data that was written!!"
-	part := zipmt.ZipPart{
+	part := ZipPart{
 		Outbuf: []byte(expected),
 		Out_sz: len(expected),
 	}
 	output := new(bytes.Buffer)
 	writer := bufio.NewWriter(output)
-	err := zipmt.WriteChunk(writer, &part)
+
+	err := writeChunk(writer, &part)
 	writer.Flush()
 	if err != nil {
 		t.Fatalf("WriteChunk got error: %v", err)
